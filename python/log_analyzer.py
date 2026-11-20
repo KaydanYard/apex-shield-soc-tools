@@ -10,6 +10,7 @@
 #   python3 log_analyzer.py auth.log -o report.txt   # choose the report name
 #   python3 log_analyzer.py auth.log -v              # verbose: print every failed login
 import argparse                     # argparse -- for command-line options
+import statistics
 import os                           # os -- for file checks and script-relative paths
 import re                           # Regular expressions -- for IP address extraction
 import sys                          # sys -- for exiting with an error code
@@ -102,6 +103,26 @@ def extract_ip_addresses(lines):
     return all_ips
 
 
+def flag_anomalies(ip_counts, z_threshhold=2.0):
+    if len(ip_counts < 2):
+        return []
+
+    counts = list(ip_counts.values())
+    mean = statistics.mean(counts)
+    stdev = statistics.stdev(counts)
+
+    if stdev == 0:
+        return []
+
+    anomalies = []
+    for ip, count in ip_counts.items():
+        z_score = (count - mean) / stdev
+        if z_score > z_threshhold:
+            anomalies.append((ip, count, round(z_score, 2)))
+
+    return sorted(anomalies, key=lambda x: x[2], reverse=True)
+
+
 def print_failed_logins(failed_logins):
     """
     Verbose mode: print every failed login line, numbered.
@@ -154,6 +175,19 @@ def generate_report(failed_logins, ip_counts, log_file, output_file):
             flag = "  <-- INVESTIGATE" if count >= 3 else ""
             f.write(f"  {ip:<20} {count:>3} attempts{flag}\n")
 
+        anomalies = flag_anomalies(ip_counts)
+        f.write("\n\nSTATISTICAL ANOMALY ANALYSIS\n")
+        f.write("-" * 30 + "\n")
+        if anomalies:
+            f.write("  IPs with statistically unusual failure rates:\n")
+            for ip, count, z_score in anomalies:
+                f.write(
+                    f"  {ip:<20} {count:>3} failures  Z-score: {z_score}\n")
+        else:
+            f.write("  No statistical outliers detected in this dataset.\n")
+            f.write(
+                "  (Small datasets with balanced counts may not surface anomalies)\n")
+
         # Full failed login log
         f.write("\n\nFULL FAILED LOGIN LOG\n")
         f.write("-" * 30 + "\n")
@@ -176,10 +210,12 @@ def validate_log_file(filepath):
         print(f"[!] Checked: {os.path.abspath(filepath)}", file=sys.stderr)
         sys.exit(1)
     if not os.path.isfile(filepath):
-        print(f"[!] ERROR: Not a file (is it a folder?): {filepath}", file=sys.stderr)
+        print(
+            f"[!] ERROR: Not a file (is it a folder?): {filepath}", file=sys.stderr)
         sys.exit(1)
     if not os.access(filepath, os.R_OK):
-        print(f"[!] ERROR: Permission denied reading: {filepath}", file=sys.stderr)
+        print(
+            f"[!] ERROR: Permission denied reading: {filepath}", file=sys.stderr)
         sys.exit(1)
 
 
@@ -219,7 +255,8 @@ def main():
     print("=" * 55)
 
     # Step 1: Check the log file, then load it
-    validate_log_file(log_file)             # exits with a clear error if missing
+    # exits with a clear error if missing
+    validate_log_file(log_file)
     print(f"\n[*] Reading log file: {log_file}")
     lines = read_log_file(log_file)
 
